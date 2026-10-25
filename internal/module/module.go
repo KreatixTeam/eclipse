@@ -61,6 +61,13 @@ func (r *Registry) Toggle(name string, enabled bool) bool {
 	return true
 }
 
+// Get returns a registered module by name, or nil.
+func (r *Registry) Get(name string) Module {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.mods[name]
+}
+
 // Enabled reports whether a module is currently on.
 func (r *Registry) Enabled(name string) bool {
 	r.mu.RLock()

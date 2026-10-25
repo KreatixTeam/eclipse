@@ -31,6 +31,7 @@ func main() {
 
 	mods := module.NewRegistry()
 	mods.Register(module.NewCommands())
+	mods.Register(module.NewPosition())
 	if *verbose {
 		mods.Register(module.NewPacketLogger(os.Stdout))
 	}

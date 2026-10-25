@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
@@ -17,15 +18,38 @@ const CommandPrefix = "."
 //	.list            list modules and their state
 //	.<module> on|off toggle a module
 //	.help            show usage
+//
+// Other modules can add their own commands via RegisterCommand.
 type Commands struct {
+	mu      sync.RWMutex
 	session *Session
+	extra   map[string]extraCommand
 }
 
-func NewCommands() *Commands { return &Commands{} }
+type extraCommand struct {
+	desc string
+	fn   func(args []string)
+}
+
+func NewCommands() *Commands {
+	return &Commands{extra: map[string]extraCommand{}}
+}
 
 func (c *Commands) Name() string { return "commands" }
 
-func (c *Commands) OnJoin(s *Session) { c.session = s }
+// RegisterCommand adds '.<name>' handled by fn. Call it during OnJoin (or
+// earlier); it applies per-session.
+func (c *Commands) RegisterCommand(name, desc string, fn func(args []string)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.extra[name] = extraCommand{desc: desc, fn: fn}
+}
+
+func (c *Commands) OnJoin(s *Session) {
+	c.mu.Lock()
+	c.session = s
+	c.mu.Unlock()
+}
 
 func (c *Commands) OnPacket(pk packet.Packet, dir Direction) (packet.Packet, bool) {
 	if dir != ServerBound {
@@ -45,6 +69,13 @@ func (c *Commands) run(input string) {
 		c.help()
 		return
 	}
+	c.mu.RLock()
+	extra, ok := c.extra[args[0]]
+	c.mu.RUnlock()
+	if ok {
+		extra.fn(args[1:])
+		return
+	}
 	switch args[0] {
 	case "help":
 		c.help()
@@ -52,7 +83,7 @@ func (c *Commands) run(input string) {
 		c.list()
 	default:
 		if len(args) != 2 || (args[1] != "on" && args[1] != "off") {
-			c.reply("usage: .<module> on|off — try .list")
+			c.reply("usage: .<module> on|off — try .list or .help")
 			return
 		}
 		if c.session.Registry.Toggle(args[0], args[1] == "on") {
@@ -64,7 +95,19 @@ func (c *Commands) run(input string) {
 }
 
 func (c *Commands) help() {
-	c.reply("eclipse: .list · .<module> on|off · .help")
+	c.mu.RLock()
+	extras := make([]string, 0, len(c.extra))
+	for n, e := range c.extra {
+		extras = append(extras, "."+n+" — "+e.desc)
+	}
+	c.mu.RUnlock()
+	sort.Strings(extras)
+	c.reply("eclipse: .list · .<module> on|off" + func() string {
+		if len(extras) == 0 {
+			return ""
+		}
+		return " · " + strings.Join(extras, " · ")
+	}())
 }
 
 func (c *Commands) list() {
@@ -82,7 +125,10 @@ func (c *Commands) list() {
 }
 
 func (c *Commands) reply(msg string) {
-	if c.session != nil {
-		_ = c.session.Chat(msg)
+	c.mu.RLock()
+	s := c.session
+	c.mu.RUnlock()
+	if s != nil {
+		_ = s.Chat(msg)
 	}
 }
