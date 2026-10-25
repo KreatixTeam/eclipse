@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/sandertv/gophertunnel/minecraft"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
@@ -119,11 +120,28 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 		}
 	}()
 
-	server, err := p.dialUpstream(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	server, err := p.dialUpstream(ctx, client)
 	if err != nil {
 		p.log.Error("dial upstream", "client", remote, "err", err)
 		_ = client.WritePacket(&packet.Disconnect{Message: "Eclipse couldn't reach " + p.cfg.ServerAddr + "\n" + err.Error()})
 		client.Close()
+		return
+	}
+	// Finish the handshake on both legs: the client gets the upstream's
+	// StartGame data while we spawn into the upstream world.
+	var spawnErr, startErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); startErr = client.StartGameContext(ctx, server.GameData()) }()
+	go func() { defer wg.Done(); spawnErr = server.DoSpawnContext(ctx) }()
+	wg.Wait()
+	if startErr != nil || spawnErr != nil {
+		p.log.Error("handshake", "client", remote, "start", startErr, "spawn", spawnErr)
+		_ = client.WritePacket(&packet.Disconnect{Message: "Eclipse couldn't join " + p.cfg.ServerAddr})
+		client.Close()
+		server.Close()
 		return
 	}
 	p.log.Info("client connected", "client", remote, "upstream", p.cfg.ServerAddr)
@@ -171,8 +189,11 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 // dialUpstream connects to the configured server. In online mode the operator
 // signs the proxy into Xbox Live once via a device-code flow; the token is
 // cached on disk and refreshed automatically.
-func (p *Proxy) dialUpstream(ctx context.Context) (*minecraft.Conn, error) {
-	d := minecraft.Dialer{}
+func (p *Proxy) dialUpstream(ctx context.Context, client *minecraft.Conn) (*minecraft.Conn, error) {
+	d := minecraft.Dialer{ClientData: client.ClientData()}
+	if p.cfg.Offline {
+		d.IdentityData = client.IdentityData()
+	}
 	if !p.cfg.Offline {
 		src := p.cfg.TokenSource
 		if src == nil {
