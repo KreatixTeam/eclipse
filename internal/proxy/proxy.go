@@ -59,6 +59,8 @@ type Proxy struct {
 
 	cache         minecraft.ResourcePackCache
 	upstreamPacks []*resource.Pack
+	done          chan struct{}
+	closeOnce     sync.Once
 }
 
 func New(cfg Config) (*Proxy, error) {
@@ -68,7 +70,7 @@ func New(cfg Config) (*Proxy, error) {
 	if cfg.Name == "" {
 		cfg.Name = "Eclipse"
 	}
-	p := &Proxy{cfg: cfg, log: slog.Default(), clients: map[string]struct{}{}}
+	p := &Proxy{cfg: cfg, log: slog.Default(), clients: map[string]struct{}{}, done: make(chan struct{})}
 	if cfg.PackCacheDir != "" {
 		p.cache = minecraft.DirResourcePackCache{Dir: cfg.PackCacheDir}
 	} else {
@@ -100,13 +102,28 @@ func (p *Proxy) packs() []*resource.Pack {
 // which can take minutes on big servers. Client joins never wait on this:
 // they only reuse packs that are already cached and skip the rest.
 func (p *Proxy) prefetchPacks() {
+	// Servers like Hive drop slow pack downloads after a few seconds; every
+	// attempt keeps what it got in the cache, so retrying makes progress.
+	for attempt := 1; attempt <= 20; attempt++ {
+		if p.prefetchOnce() {
+			return
+		}
+		select {
+		case <-p.done:
+			return
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func (p *Proxy) prefetchOnce() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	start := time.Now()
 	conn, err := p.dialUpstream(ctx, nil)
 	if err != nil {
 		p.log.Warn("prefetch packs", "upstream", p.cfg.ServerAddr, "err", err)
-		return
+		return false
 	}
 	packs := conn.ResourcePacks()
 	conn.Close()
@@ -114,6 +131,7 @@ func (p *Proxy) prefetchPacks() {
 	p.upstreamPacks = packs
 	p.mu.Unlock()
 	p.log.Info("prefetched packs", "upstream", p.cfg.ServerAddr, "packs", len(packs), "took", time.Since(start).Round(time.Millisecond))
+	return true
 }
 
 // havePack reports whether a pack is already prefetched, so a join can load
@@ -159,7 +177,10 @@ func (p *Proxy) Run() error {
 }
 
 // Close stops accepting new connections.
-func (p *Proxy) Close() { p.listener.Close() }
+func (p *Proxy) Close() {
+	p.closeOnce.Do(func() { close(p.done) })
+	p.listener.Close()
+}
 
 // SetHooks installs event callbacks after construction.
 func (p *Proxy) SetHooks(h Hooks) { p.cfg.Hooks = h }
