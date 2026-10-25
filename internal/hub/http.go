@@ -45,6 +45,7 @@ func (h *Hub) loginStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.Acct != nil {
 		out["account"] = f.Acct.ID
+		out["gamertag"] = f.Acct.Gamertag
 	}
 	writeJSON(w, out)
 }
