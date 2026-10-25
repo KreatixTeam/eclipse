@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/sandertv/gophertunnel/minecraft"
 
@@ -23,6 +24,15 @@ type Config struct {
 	Offline bool
 	// Modules receives every packet for inspection/mutation.
 	Modules *module.Registry
+	// Hooks, if set, receive player join/leave and lifecycle callbacks
+	// (e.g. the web dashboard).
+	Hooks Hooks
+}
+
+// Hooks are optional callbacks fired on proxy events.
+type Hooks interface {
+	PlayerJoin(addr string)
+	PlayerLeave(addr string)
 }
 
 // Proxy accepts Bedrock clients and bridges each connection to an upstream
@@ -31,6 +41,8 @@ type Proxy struct {
 	cfg      Config
 	listener *minecraft.Listener
 	log      *slog.Logger
+	mu       sync.Mutex
+	clients  map[string]struct{}
 }
 
 func New(cfg Config) (*Proxy, error) {
@@ -48,7 +60,7 @@ func New(cfg Config) (*Proxy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", cfg.ListenAddr, err)
 	}
-	return &Proxy{cfg: cfg, listener: l, log: slog.Default()}, nil
+	return &Proxy{cfg: cfg, listener: l, log: slog.Default(), clients: map[string]struct{}{}}, nil
 }
 
 // Run accepts connections until the listener is closed.
@@ -66,8 +78,40 @@ func (p *Proxy) Run() error {
 // Close stops accepting new connections.
 func (p *Proxy) Close() { p.listener.Close() }
 
+// SetHooks installs event callbacks after construction.
+func (p *Proxy) SetHooks(h Hooks) { p.cfg.Hooks = h }
+
+// ListenAddr/ServerAddr describe the configured route, for the dashboard.
+func (p *Proxy) ListenAddr() string { return p.cfg.ListenAddr }
+func (p *Proxy) ServerAddr() string { return p.cfg.ServerAddr }
+
+// Clients lists the addresses of currently connected players.
+func (p *Proxy) Clients() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.clients))
+	for a := range p.clients {
+		out = append(out, a)
+	}
+	return out
+}
+
 func (p *Proxy) handle(client *minecraft.Conn) {
 	remote := client.RemoteAddr().String()
+	p.mu.Lock()
+	p.clients[remote] = struct{}{}
+	p.mu.Unlock()
+	if p.cfg.Hooks != nil {
+		p.cfg.Hooks.PlayerJoin(remote)
+	}
+	defer func() {
+		p.mu.Lock()
+		delete(p.clients, remote)
+		p.mu.Unlock()
+		if p.cfg.Hooks != nil {
+			p.cfg.Hooks.PlayerLeave(remote)
+		}
+	}()
 
 	server, err := p.dialUpstream(context.Background())
 	if err != nil {

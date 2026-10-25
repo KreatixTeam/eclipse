@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eclipse</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: #000; color: #e8e8ea; min-height: 100vh;
+    font: 14px/1.5 -apple-system, "SF Pro", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 40px 20px 80px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 32px; }
+  h1 { font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
+  h1 span { color: #6b6b70; font-weight: 400; }
+  .pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: #111; border: 1px solid #232326; color: #9a9aa0;
+  }
+  .pill.live { color: #4ade80; border-color: #14532d; background: #03180c; }
+  section { margin-bottom: 28px; }
+  h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .12em; color: #6b6b70; margin-bottom: 10px;
+  }
+  .card {
+    background: #0a0a0b; border: 1px solid #1c1c1f; border-radius: 14px;
+    padding: 16px;
+  }
+  .route { display: flex; align-items: center; gap: 10px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .route .arrow { color: #6b6b70; }
+  .mod {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 0;
+  }
+  .mod + .mod { border-top: 1px solid #141416; }
+  .mod .name { font-weight: 500; }
+  .sw {
+    width: 42px; height: 24px; border-radius: 999px; border: none; cursor: pointer;
+    background: #2a2a2e; position: relative; transition: background .18s ease;
+  }
+  .sw::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+    border-radius: 50%; background: #8a8a90;
+    transition: transform .18s cubic-bezier(.3,1.4,.5,1), background .18s ease;
+  }
+  .sw.on { background: #2563eb; }
+  .sw.on::after { transform: translateX(18px); background: #fff; }
+  .feed {
+    font-family: ui-monospace, monospace; font-size: 12px; max-height: 320px;
+    overflow-y: auto; display: flex; flex-direction: column-reverse;
+  }
+  .feed .row { padding: 2px 0; color: #9a9aa0; display: flex; gap: 10px; }
+  .feed .dir { width: 38px; flex: none; }
+  .feed .dir.up { color: #60a5fa; }
+  .feed .dir.down { color: #a78bfa; }
+  .feed .pkt { color: #d7d7db; }
+  .empty { color: #55555a; font-size: 13px; }
+  ul.players { list-style: none; }
+  ul.players li { padding: 6px 0; font-family: ui-monospace, monospace; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Eclipse <span>proxy</span></h1>
+    <span class="pill" id="status">connecting…</span>
+  </header>
+
+  <section>
+    <h2>Route</h2>
+    <div class="card"><div class="route">
+      <span id="listen">—</span><span class="arrow">→</span><span id="server">—</span>
+    </div></div>
+  </section>
+
+  <section>
+    <h2>Players</h2>
+    <div class="card"><ul class="players" id="players"></ul></div>
+  </section>
+
+  <section>
+    <h2>Modules</h2>
+    <div class="card" id="modules"></div>
+  </section>
+
+  <section>
+    <h2>Packets</h2>
+    <div class="card"><div class="feed" id="feed"><div class="empty">waiting for traffic…</div></div></div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function refresh() {
+  const s = await fetch("/api/state").then(r => r.json());
+  $("listen").textContent = s.listen;
+  $("server").textContent = s.server;
+  $("status").textContent = "online";
+  $("status").classList.add("live");
+
+  $("players").innerHTML = s.players.length
+    ? s.players.map(p => `<li>${p}</li>`).join("")
+    : `<li class="empty">nobody connected</li>`;
+
+  $("modules").innerHTML = Object.entries(s.modules).map(([name, on]) => `
+    <div class="mod"><span class="name">${name}</span>
+    <button class="sw ${on ? "on" : ""}" data-name="${name}" aria-label="toggle ${name}"></button></div>
+  `).join("") || `<div class="empty">no modules</div>`;
+
+  document.querySelectorAll(".sw").forEach(b => b.onclick = async () => {
+    const on = !b.classList.contains("on");
+    b.classList.toggle("on", on);
+    await fetch("/api/toggle", {
+      method: "POST", headers: {"content-type": "application/json"},
+      body: JSON.stringify({name: b.dataset.name, on}),
+    });
+  });
+
+  if (s.feed && s.feed.length) renderFeed(s.feed);
+}
+
+function renderFeed(entries) {
+  $("feed").innerHTML = entries.map(e => `
+    <div class="row"><span class="dir ${e.dir}">${e.dir === "up" ? "C→S" : "S→C"}</span>
+    <span class="pkt">${e.pkt}</span></div>`).join("");
+}
+
+const es = new EventSource("/api/feed");
+es.onmessage = (ev) => {
+  const e = JSON.parse(ev.data);
+  const feed = $("feed");
+  if (feed.querySelector(".empty")) feed.innerHTML = "";
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<span class="dir ${e.dir}">${e.dir === "up" ? "C→S" : "S→C"}</span><span class="pkt">${e.pkt}</span>`;
+  feed.prepend(row);
+  while (feed.children.length > 200) feed.lastChild.remove();
+};
+
+refresh().catch(() => { $("status").textContent = "offline"; });
+setInterval(() => refresh().catch(() => {}), 5000);
+</script>
+</body>
+</html>

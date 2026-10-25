@@ -33,6 +33,10 @@ type Registry struct {
 	mu   sync.RWMutex
 	mods map[string]Module
 	on   map[string]bool
+
+	// Watch, if set, is called for every packet that reaches Apply, before the
+	// modules run. Used by the web UI's live packet feed.
+	Watch func(pk packet.Packet, dir Direction)
 }
 
 func NewRegistry() *Registry {
@@ -91,6 +95,9 @@ func (r *Registry) Names() []string {
 func (r *Registry) Apply(pk packet.Packet, dir Direction) (packet.Packet, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if r.Watch != nil {
+		r.Watch(pk, dir)
+	}
 	for name, m := range r.mods {
 		if !r.on[name] {
 			continue

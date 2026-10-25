@@ -7,8 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"net/http"
+
 	"github.com/KreatixTeam/eclipse/internal/module"
 	"github.com/KreatixTeam/eclipse/internal/proxy"
+	"github.com/KreatixTeam/eclipse/internal/webui"
 )
 
 func main() {
@@ -17,6 +20,7 @@ func main() {
 	name := flag.String("name", "Eclipse", "MOTD/name advertised on the LAN ping")
 	offline := flag.Bool("offline", false, "disable Xbox Live auth on both ends (LAN/offline servers only)")
 	verbose := flag.Bool("v", false, "log every packet flowing through the proxy")
+	web := flag.String("web", "", "serve the web dashboard on this address (e.g. :8080)")
 	flag.Parse()
 
 	if *server == "" {
@@ -50,6 +54,16 @@ func main() {
 		p.Close()
 	}()
 
+	if *web != "" {
+		dash := webui.New(mods, p)
+		p.SetHooks(dash)
+		go func() {
+			fmt.Fprintf(os.Stderr, "eclipse: dashboard on http://localhost%s\n", *web)
+			if err := http.ListenAndServe(*web, dash.Handler()); err != nil {
+				fmt.Fprintln(os.Stderr, "eclipse: webui:", err)
+			}
+		}()
+	}
 	if err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "eclipse:", err)
 		os.Exit(1)
