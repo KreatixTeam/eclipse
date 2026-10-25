@@ -5,3 +5,9 @@ eclipse
 internal/webui/dist/
 web/node_modules/
 web/dist/
+
+cmd/eclipsed/dist/
+hub/node_modules/
+hub/dist/
+data/
+eclipsed

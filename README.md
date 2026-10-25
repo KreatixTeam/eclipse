@@ -41,6 +41,20 @@ make          # builds web/dist (npm) then the go binary
 
 Then join `:19132` (or pick Eclipse from the LAN list) in Minecraft Bedrock.
 
+## Hosted hub (eclipsed)
+
+`eclipsed` runs Eclipse as a multi-tenant service: each user signs in with
+their own Microsoft/Xbox account via device code, adds servers, and gets a
+dedicated proxy port to join from Minecraft Bedrock.
+
+```bash
+make hosted
+./eclipsed -http 127.0.0.1:8920 -data data -port-from 25000 -port-to 25099
+```
+
+Serve the HTTP endpoint behind TLS and keep the port range open on UDP.
+Live at https://eclipse.kreatix.dev.
+
 ## Writing a module
 
 ```go

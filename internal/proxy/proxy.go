@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/sandertv/gophertunnel/minecraft"
+	"golang.org/x/oauth2"
 
 	"github.com/KreatixTeam/eclipse/internal/module"
 )
@@ -27,6 +28,10 @@ type Config struct {
 	// Hooks, if set, receive player join/leave and lifecycle callbacks
 	// (e.g. the web dashboard).
 	Hooks Hooks
+	// TokenSource overrides Xbox Live auth for upstream dials (hosted mode:
+	// each player's own Microsoft account). Nil falls back to the
+	// operator's cached token.
+	TokenSource oauth2.TokenSource
 }
 
 // Hooks are optional callbacks fired on proxy events.
@@ -167,9 +172,13 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 func (p *Proxy) dialUpstream(ctx context.Context) (*minecraft.Conn, error) {
 	d := minecraft.Dialer{}
 	if !p.cfg.Offline {
-		src, err := tokenSource(ctx)
-		if err != nil {
-			return nil, err
+		src := p.cfg.TokenSource
+		if src == nil {
+			var err error
+			src, err = tokenSource(ctx)
+			if err != nil {
+				return nil, err
+			}
 		}
 		d.TokenSource = src
 	}
