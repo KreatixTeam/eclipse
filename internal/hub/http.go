@@ -10,6 +10,7 @@ import (
 // by the caller's mux alongside it.
 func (h *Hub) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/info", h.info)
 	mux.HandleFunc("POST /api/login", h.login)
 	mux.HandleFunc("GET /api/login/", h.loginStatus)
 	mux.HandleFunc("GET /api/servers", h.listServers)
@@ -22,6 +23,18 @@ func (h *Hub) Handler() http.Handler {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("content-type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (h *Hub) info(w http.ResponseWriter, r *http.Request) {
+	host := h.JoinHost
+	if host == "" {
+		host = strings.Split(r.Host, ":")[0]
+	}
+	out := map[string]string{"joinHost": host}
+	if a := h.account(r, ""); a != nil {
+		out["gamertag"] = a.Gamertag
+	}
+	writeJSON(w, out)
 }
 
 func (h *Hub) login(w http.ResponseWriter, r *http.Request) {

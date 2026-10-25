@@ -27,6 +27,7 @@ import (
 type Account struct {
 	ID       string        `json:"id"`
 	Gamertag string        `json:"gamertag,omitempty"`
+	XUID     string        `json:"xuid,omitempty"`
 	Token    *oauth2.Token `json:"token"`
 	Servers  []*Server     `json:"servers"`
 }
@@ -52,6 +53,9 @@ type Flow struct {
 
 // Hub owns accounts, device-code flows and spawned proxy listeners.
 type Hub struct {
+	// JoinHost is the DNS-only hostname players put in Bedrock's server list.
+	JoinHost string
+
 	dir      string
 	portFrom int
 	portTo   int
@@ -106,6 +110,10 @@ func (h *Hub) StartLogin(ctx context.Context) (*Flow, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		tok, err := auth.AndroidConfig.DeviceAccessToken(ctx, d)
+		var gt, xuid string
+		if err == nil {
+			gt, xuid, err = profile(ctx, tok)
+		}
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		f.Done = true
@@ -113,12 +121,59 @@ func (h *Hub) StartLogin(ctx context.Context) (*Flow, error) {
 			f.Err = err.Error()
 			return
 		}
-		acct := &Account{ID: randID(), Token: tok}
-		h.accounts[acct.ID] = acct
+		acct := h.byXUIDLocked(xuid)
+		if acct == nil {
+			acct = &Account{ID: randID()}
+			h.accounts[acct.ID] = acct
+		}
+		acct.Token, acct.Gamertag, acct.XUID = tok, gt, xuid
 		f.Acct = acct
 		_ = h.saveLocked(acct)
 	}()
 	return f, nil
+}
+
+// profile resolves the gamertag and XUID behind a Microsoft token.
+func profile(ctx context.Context, tok *oauth2.Token) (gamertag, xuid string, err error) {
+	x, err := auth.RequestXBLToken(ctx, tok, "http://xboxlive.com")
+	if err != nil {
+		return "", "", fmt.Errorf("xbox live: %w", err)
+	}
+	u := x.AuthorizationToken.UserInfo()
+	return u.GamerTag, u.XUID, nil
+}
+
+func (h *Hub) byXUIDLocked(xuid string) *Account {
+	if xuid == "" {
+		return nil
+	}
+	for _, a := range h.accounts {
+		if a.XUID == xuid {
+			return a
+		}
+	}
+	return nil
+}
+
+// savingTokenSource persists refreshed tokens back onto the account.
+type savingTokenSource struct {
+	h    *Hub
+	acct *Account
+	src  oauth2.TokenSource
+}
+
+func (s *savingTokenSource) Token() (*oauth2.Token, error) {
+	t, err := s.src.Token()
+	if err != nil {
+		return nil, err
+	}
+	s.h.mu.Lock()
+	if s.acct.Token == nil || s.acct.Token.AccessToken != t.AccessToken {
+		s.acct.Token = t
+		_ = s.h.saveLocked(s.acct)
+	}
+	s.h.mu.Unlock()
+	return t, nil
 }
 
 // LoginStatus reports a flow's progress.
@@ -230,7 +285,7 @@ func (h *Hub) startLocked(acct *Account, s *Server) error {
 		ServerAddr:  s.Addr,
 		Name:        "Eclipse · " + s.Name,
 		Modules:     defaultModules(),
-		TokenSource: auth.RefreshTokenSource(acct.Token),
+		TokenSource: oauth2.ReuseTokenSource(nil, &savingTokenSource{h: h, acct: acct, src: auth.RefreshTokenSource(acct.Token)}),
 	})
 	if err != nil {
 		return err
@@ -288,6 +343,9 @@ func (h *Hub) load() error {
 			continue
 		}
 		h.accounts[a.ID] = a
+		if a.Gamertag == "" {
+			go h.backfill(a)
+		}
 		// Restart proxies for servers that were running.
 		for _, s := range a.Servers {
 			if s.Running {
@@ -299,4 +357,21 @@ func (h *Hub) load() error {
 		}
 	}
 	return nil
+}
+
+func (h *Hub) backfill(a *Account) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	h.mu.Lock()
+	tok := a.Token
+	h.mu.Unlock()
+	gt, xuid, err := profile(ctx, tok)
+	if err != nil {
+		h.log.Error("backfill profile", "account", a.ID, "err", err)
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	a.Gamertag, a.XUID = gt, xuid
+	_ = h.saveLocked(a)
 }

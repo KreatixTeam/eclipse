@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/sandertv/gophertunnel/minecraft"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 	"golang.org/x/oauth2"
 
 	"github.com/KreatixTeam/eclipse/internal/module"
@@ -121,6 +122,7 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 	server, err := p.dialUpstream(context.Background())
 	if err != nil {
 		p.log.Error("dial upstream", "client", remote, "err", err)
+		_ = client.WritePacket(&packet.Disconnect{Message: "Eclipse couldn't reach " + p.cfg.ServerAddr + "\n" + err.Error()})
 		client.Close()
 		return
 	}
