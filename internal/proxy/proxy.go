@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft"
+	"github.com/sandertv/gophertunnel/minecraft/protocol/login"
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
+	"github.com/sandertv/gophertunnel/minecraft/resource"
 	"golang.org/x/oauth2"
 
 	"github.com/KreatixTeam/eclipse/internal/module"
@@ -34,6 +37,9 @@ type Config struct {
 	// each player's own Microsoft account). Nil falls back to the
 	// operator's cached token.
 	TokenSource oauth2.TokenSource
+	// PackCacheDir stores the upstream's resource packs on disk so joins
+	// don't re-download them. Empty keeps them in memory only.
+	PackCacheDir string
 }
 
 // Hooks are optional callbacks fired on proxy events.
@@ -50,6 +56,9 @@ type Proxy struct {
 	log      *slog.Logger
 	mu       sync.Mutex
 	clients  map[string]struct{}
+
+	cache         minecraft.ResourcePackCache
+	upstreamPacks []*resource.Pack
 }
 
 func New(cfg Config) (*Proxy, error) {
@@ -59,20 +68,87 @@ func New(cfg Config) (*Proxy, error) {
 	if cfg.Name == "" {
 		cfg.Name = "Eclipse"
 	}
+	p := &Proxy{cfg: cfg, log: slog.Default(), clients: map[string]struct{}{}}
+	if cfg.PackCacheDir != "" {
+		p.cache = minecraft.DirResourcePackCache{Dir: cfg.PackCacheDir}
+	} else {
+		p.cache = &memPackCache{m: map[minecraft.ResourcePackCacheKey]*resource.Pack{}}
+	}
 	l, err := minecraft.ListenConfig{
 		StatusProvider:         minecraft.NewStatusProvider(cfg.Name, "Eclipse Proxy"),
 		AuthenticationDisabled: cfg.Offline,
 		AllowUnknownPackets:    true,
+		FetchResourcePacks: func(login.IdentityData, login.ClientData, []*resource.Pack) []*resource.Pack {
+			return p.packs()
+		},
 	}.Listen("raknet", cfg.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", cfg.ListenAddr, err)
 	}
-	return &Proxy{cfg: cfg, listener: l, log: slog.Default(), clients: map[string]struct{}{}}, nil
+	p.listener = l
+	return p, nil
+}
+
+// packs returns the upstream's resource packs, once prefetched.
+func (p *Proxy) packs() []*resource.Pack {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.upstreamPacks
+}
+
+// prefetchPacks logs into the upstream once to download its resource packs,
+// which can take minutes on big servers. Client joins never wait on this:
+// they only reuse packs that are already cached and skip the rest.
+func (p *Proxy) prefetchPacks() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	start := time.Now()
+	conn, err := p.dialUpstream(ctx, nil)
+	if err != nil {
+		p.log.Warn("prefetch packs", "upstream", p.cfg.ServerAddr, "err", err)
+		return
+	}
+	packs := conn.ResourcePacks()
+	conn.Close()
+	p.mu.Lock()
+	p.upstreamPacks = packs
+	p.mu.Unlock()
+	p.log.Info("prefetched packs", "upstream", p.cfg.ServerAddr, "packs", len(packs), "took", time.Since(start).Round(time.Millisecond))
+}
+
+// havePack reports whether a pack is already prefetched, so a join can load
+// it from cache instead of downloading it.
+func (p *Proxy) havePack(id uuid.UUID, version string) bool {
+	for _, pk := range p.packs() {
+		if pk.UUID() == id && pk.Version() == version {
+			return true
+		}
+	}
+	return false
+}
+
+type memPackCache struct {
+	mu sync.Mutex
+	m  map[minecraft.ResourcePackCacheKey]*resource.Pack
+}
+
+func (c *memPackCache) Load(_ context.Context, k minecraft.ResourcePackCacheKey) (*resource.Pack, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.m[k], nil
+}
+
+func (c *memPackCache) Store(_ context.Context, k minecraft.ResourcePackCacheKey, pk *resource.Pack) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[k] = pk
+	return nil
 }
 
 // Run accepts connections until the listener is closed.
 func (p *Proxy) Run() error {
 	p.log.Info("eclipse proxy listening", "addr", p.cfg.ListenAddr, "upstream", p.cfg.ServerAddr)
+	go p.prefetchPacks()
 	for {
 		conn, err := p.listener.Accept()
 		if err != nil {
@@ -190,9 +266,15 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 // signs the proxy into Xbox Live once via a device-code flow; the token is
 // cached on disk and refreshed automatically.
 func (p *Proxy) dialUpstream(ctx context.Context, client *minecraft.Conn) (*minecraft.Conn, error) {
-	d := minecraft.Dialer{ClientData: client.ClientData()}
-	if p.cfg.Offline {
-		d.IdentityData = client.IdentityData()
+	d := minecraft.Dialer{ResourcePackCache: p.cache}
+	if client != nil {
+		d.ClientData = client.ClientData()
+		if p.cfg.Offline {
+			d.IdentityData = client.IdentityData()
+		}
+		d.DownloadResourcePack = func(id uuid.UUID, version string, _, _ int) bool {
+			return p.havePack(id, version)
+		}
 	}
 	if !p.cfg.Offline {
 		src := p.cfg.TokenSource

@@ -281,11 +281,12 @@ func defaultModules() *module.Registry {
 
 func (h *Hub) startLocked(acct *Account, s *Server) error {
 	p, err := proxy.New(proxy.Config{
-		ListenAddr:  fmt.Sprintf(":%d", s.Port),
-		ServerAddr:  s.Addr,
-		Name:        "Eclipse · " + s.Name,
-		Modules:     defaultModules(),
-		TokenSource: oauth2.ReuseTokenSource(nil, &savingTokenSource{h: h, acct: acct, src: auth.RefreshTokenSource(acct.Token)}),
+		ListenAddr:   fmt.Sprintf(":%d", s.Port),
+		ServerAddr:   s.Addr,
+		Name:         "Eclipse · " + s.Name,
+		Modules:      defaultModules(),
+		PackCacheDir: filepath.Join(h.dir, "packs"),
+		TokenSource:  oauth2.ReuseTokenSource(nil, &savingTokenSource{h: h, acct: acct, src: auth.RefreshTokenSource(acct.Token)}),
 	})
 	if err != nil {
 		return err
