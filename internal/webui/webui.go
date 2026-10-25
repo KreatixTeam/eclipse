@@ -3,7 +3,7 @@
 package webui
 
 import (
-	_ "embed"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,8 +16,11 @@ import (
 	"github.com/KreatixTeam/eclipse/internal/module"
 )
 
-//go:embed index.html
-var indexHTML []byte
+// dist holds the built Vuetify dashboard (web/dist, produced by
+// `npm run build` in web/).
+//
+//go:embed all:dist
+var dist embed.FS
 
 // Server is the dashboard HTTP server.
 type Server struct {
@@ -95,9 +98,12 @@ func (s *Server) broadcast(e feedEntry) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	static := http.FileServer(http.FS(dist))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/html; charset=utf-8")
-		w.Write(indexHTML)
+		// Strip the leading "dist" so / maps to dist/index.html.
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/dist" + r.URL.Path
+		static.ServeHTTP(w, r2)
 	})
 	mux.HandleFunc("/api/state", s.state)
 	mux.HandleFunc("/api/toggle", s.toggle)

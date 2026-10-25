@@ -1,3 +1,7 @@
 
 .buzz/
 eclipse
+
+internal/webui/dist/
+web/node_modules/
+web/dist/

@@ -15,18 +15,22 @@ Early scaffold. Working so far:
 - LAN advertisement so consoles/phones see it in the Friends/LAN tab
 - Module registry with per-packet hooks in both directions
 - `packet-logger` module (`-v`)
-- `commands` module — in-chat control: `.list`, `.<module> on|off`, `.help`
-  (`.`-prefixed chat is swallowed by the proxy, never sent to the server)
+- `commands` module — in-chat control: `.list`, `.<module> on|off`, `.help`,
+  extensible by other modules (`.pos`)
+- `position` module — tracks your coordinates, `.pos` prints them
+- Embedded web dashboard (`-web :8080`): Vue 3 + Vuetify OLED-dark UI with
+  live module toggles, players and a streaming packet feed (SSE)
 - Xbox Live auth toward upstream servers via device-code sign-in
   (`-offline` for authless/LAN servers)
 
 ## Build & run
 
 ```sh
-go build ./cmd/eclipse
+make          # builds web/dist (npm) then the go binary
+# or just:    go build -o eclipse ./cmd/eclipse   (dashboard needs `make web` first)
 
-# LAN / offline server
-./eclipse -listen :19132 -server 127.0.0.1:19133 -offline -v
+# LAN / offline server, with the web dashboard
+./eclipse -listen :19132 -server 127.0.0.1:19133 -offline -v -web :8080
 
 # Real server (one-time Microsoft device-code sign-in printed to stderr)
 ./eclipse -listen :19132 -server play.geysermc.org:19132
