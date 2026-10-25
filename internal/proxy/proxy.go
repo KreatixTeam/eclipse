@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -104,26 +105,32 @@ func (p *Proxy) packs() []*resource.Pack {
 func (p *Proxy) prefetchPacks() {
 	// Servers like Hive drop slow pack downloads after a few seconds; every
 	// attempt keeps what it got in the cache, so retrying makes progress.
-	for attempt := 1; attempt <= 20; attempt++ {
-		if p.prefetchOnce() {
+	// A kick (VPN block, ban, full server) won't change on retry, and auth
+	// is rate limited, so back off hard and give up after a few tries.
+	wait := 15 * time.Second
+	for attempt := 1; attempt <= 5; attempt++ {
+		ok, kicked := p.prefetchOnce()
+		if ok || kicked {
 			return
 		}
 		select {
 		case <-p.done:
 			return
-		case <-time.After(3 * time.Second):
+		case <-time.After(wait):
 		}
+		wait *= 2
 	}
 }
 
-func (p *Proxy) prefetchOnce() bool {
+func (p *Proxy) prefetchOnce() (ok, kicked bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	start := time.Now()
 	conn, err := p.dialUpstream(ctx, nil)
 	if err != nil {
 		p.log.Warn("prefetch packs", "upstream", p.cfg.ServerAddr, "err", err)
-		return false
+		var disc minecraft.DisconnectError
+		return false, errors.As(err, &disc)
 	}
 	packs := conn.ResourcePacks()
 	conn.Close()
@@ -131,7 +138,7 @@ func (p *Proxy) prefetchOnce() bool {
 	p.upstreamPacks = packs
 	p.mu.Unlock()
 	p.log.Info("prefetched packs", "upstream", p.cfg.ServerAddr, "packs", len(packs), "took", time.Since(start).Round(time.Millisecond))
-	return true
+	return true, false
 }
 
 // havePack reports whether a pack is already prefetched, so a join can load
