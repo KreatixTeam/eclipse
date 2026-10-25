@@ -33,6 +33,10 @@ func main() {
 	mods := module.NewRegistry()
 	mods.Register(module.NewCommands())
 	mods.Register(module.NewPosition())
+	mods.Register(module.NewVelocity())
+	mods.Register(module.NewFly())
+	mods.Toggle("velocity", false)
+	mods.Toggle("fly", false)
 	if *dump != "" {
 		d, err := module.NewDump(*dump)
 		if err != nil {

@@ -18,6 +18,9 @@ Early scaffold. Working so far:
 - `commands` module — in-chat control: `.list`, `.<module> on|off`, `.help`,
   extensible by other modules (`.pos`)
 - `position` module — tracks your coordinates, `.pos` prints them
+- `velocity` module — anti-knockback: zeroes SetActorMotion aimed at you
+- `fly` module — forces flight abilities client-side (`.fly on|off`)
+- `dump` module — `-dump packets.jsonl` records every packet as JSON lines
 - Embedded web dashboard (`-web :8080`): Vue 3 + Vuetify OLED-dark UI with
   live module toggles, players and a streaming packet feed (SSE)
 - Xbox Live auth toward upstream servers via device-code sign-in

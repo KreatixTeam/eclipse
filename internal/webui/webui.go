@@ -156,6 +156,11 @@ func (s *Server) toggle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown module", http.StatusNotFound)
 		return
 	}
+	if m := s.reg.Get(body.Name); m != nil {
+		if t, ok := m.(module.ToggleAware); ok {
+			t.OnToggle(body.On)
+		}
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 

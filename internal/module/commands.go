@@ -87,6 +87,11 @@ func (c *Commands) run(input string) {
 			return
 		}
 		if c.session.Registry.Toggle(args[0], args[1] == "on") {
+			if m := c.session.Registry.Get(args[0]); m != nil {
+				if t, ok := m.(ToggleAware); ok {
+					t.OnToggle(args[1] == "on")
+				}
+			}
 			c.reply(fmt.Sprintf("%s %s", args[0], args[1]))
 		} else {
 			c.reply("unknown module: " + args[0])

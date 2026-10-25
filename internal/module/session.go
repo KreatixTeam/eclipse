@@ -39,3 +39,8 @@ func (s *Session) Chat(msg string) error {
 type JoinAware interface {
 	OnJoin(s *Session)
 }
+
+// ToggleAware is implemented by modules that react to being switched on/off.
+type ToggleAware interface {
+	OnToggle(on bool)
+}
