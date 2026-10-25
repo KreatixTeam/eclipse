@@ -21,6 +21,7 @@ func main() {
 	offline := flag.Bool("offline", false, "disable Xbox Live auth on both ends (LAN/offline servers only)")
 	verbose := flag.Bool("v", false, "log every packet flowing through the proxy")
 	web := flag.String("web", "", "serve the web dashboard on this address (e.g. :8080)")
+	dump := flag.String("dump", "", "log every packet as JSON lines to this file")
 	flag.Parse()
 
 	if *server == "" {
@@ -32,6 +33,15 @@ func main() {
 	mods := module.NewRegistry()
 	mods.Register(module.NewCommands())
 	mods.Register(module.NewPosition())
+	if *dump != "" {
+		d, err := module.NewDump(*dump)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "eclipse: dump:", err)
+			os.Exit(1)
+		}
+		defer d.Close()
+		mods.Register(d)
+	}
 	if *verbose {
 		mods.Register(module.NewPacketLogger(os.Stdout))
 	}
