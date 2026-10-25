@@ -15,6 +15,8 @@ Early scaffold. Working so far:
 - LAN advertisement so consoles/phones see it in the Friends/LAN tab
 - Module registry with per-packet hooks in both directions
 - `packet-logger` module (`-v`)
+- `commands` module — in-chat control: `.list`, `.<module> on|off`, `.help`
+  (`.`-prefixed chat is swallowed by the proxy, never sent to the server)
 - Xbox Live auth toward upstream servers via device-code sign-in
   (`-offline` for authless/LAN servers)
 

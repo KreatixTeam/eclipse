@@ -77,6 +77,9 @@ func (p *Proxy) handle(client *minecraft.Conn) {
 	}
 	p.log.Info("client connected", "client", remote, "upstream", p.cfg.ServerAddr)
 
+	session := &module.Session{Client: client, Server: server, Registry: p.cfg.Modules}
+	p.cfg.Modules.NotifyJoin(session)
+
 	// Bridge: forward every packet in both directions through the modules.
 	clientDone := make(chan struct{})
 	go func() {

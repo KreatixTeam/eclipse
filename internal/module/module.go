@@ -57,6 +57,24 @@ func (r *Registry) Toggle(name string, enabled bool) bool {
 	return true
 }
 
+// Enabled reports whether a module is currently on.
+func (r *Registry) Enabled(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.on[name]
+}
+
+// NotifyJoin calls OnJoin on every registered module that implements it.
+func (r *Registry) NotifyJoin(s *Session) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, m := range r.mods {
+		if j, ok := m.(JoinAware); ok {
+			j.OnJoin(s)
+		}
+	}
+}
+
 // Names lists registered module names.
 func (r *Registry) Names() []string {
 	r.mu.RLock()

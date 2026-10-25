@@ -26,6 +26,7 @@ func main() {
 	}
 
 	mods := module.NewRegistry()
+	mods.Register(module.NewCommands())
 	if *verbose {
 		mods.Register(module.NewPacketLogger(os.Stdout))
 	}
